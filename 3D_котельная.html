@@ -53,6 +53,7 @@ tr.grp td{background:var(--stage);color:var(--muted);font-size:.78rem;letter-spa
 .info .x{position:absolute;right:6px;top:4px;border:0;background:none;color:var(--muted);font-size:20px;line-height:1;padding:4px 8px;cursor:pointer}
 .pro-only{}
 body.client .pro-only{display:none}
+.in-only{display:none} body.inside .in-only{display:inline} body.inside .out-only{display:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 <div class="wrap">
@@ -65,7 +66,7 @@ body.client .pro-only{display:none}
     <div class="stage" id="stage" aria-label="3D-модель котельной"><div class="info" id="info" hidden></div></div>
     <div class="bar" id="toggles"></div>
   </section>
-  <p class="note" id="hint">Крутить — одним пальцем, сдвигать — двумя, приближать — щипком. Тап по элементу — его данные.<span class="pro-only"> Галочка в таблице или в карточке элемента показывает на модели отметку от потолка, мм.</span></p>
+  <p class="note" id="hint"><span class="out-only">Крутить — одним пальцем, сдвигать — двумя, приближать — щипком. Тап по элементу — его данные.</span><span class="in-only">Изнутри: осматриваться — вести пальцем, перейти — тап по полу. Тап по элементу — его данные. Вернуться — «Общий вид».</span><span class="pro-only"> Галочка в таблице или в карточке элемента показывает на модели отметку от потолка, мм.</span></p>
   <div class="legend pro-only" id="legend"></div>
   <div class="tw pro-only"><table><thead><tr><th class="cb"><input type="checkbox" id="elall" aria-label="Отметки у всех элементов"></th><th>№</th><th>Элемент</th><th>От потолка, мм: до верха / до оси</th></tr></thead><tbody id="rows"></tbody></table></div>
   <h2 class="h2 pro-only">ThermoDuct DN200 — к заказу</h2>
@@ -1415,8 +1416,26 @@ const VIEWS = {
   'От кухни-гостиной': {pos: [23600, 8900, 8300], tgt: [14200, 11400, 1700], off: ['Стена кухни-гостиной']},
   'От коридора': {pos: [4800, 13900, 8300], tgt: [14200, 11400, 1700], off: ['Стены с/у и коридора']}
 };
+// 06.11 Виталий: режим «изнутри» — глаза на 1600 от чистого пола, широкий угол, осмотр пальцем, переход тапом по полу
+const EYE = D.FL + 1600;
+const INSIDE = {'Изнутри: котельная': {pos: [14150, 11800], look: [14800, 13400, 2150]}, 'Изнутри: чёрная кухня': {pos: [13500, 8900], look: [15000, 10600, 1500]}};
+let inside = false;
+function insideFov() { const a = camera.aspect || 1; camera.fov = Math.min(88, 2 * Math.atan(Math.tan(Math.PI * 45 / 180) / a) * 180 / Math.PI); camera.updateProjectionMatrix(); }
+function setInside(on) {
+  inside = on; document.body.classList.toggle('inside', on);
+  if (on) { camera.near = 0.01; controls.enableZoom = false; controls.enablePan = false; controls.rotateSpeed = -0.35; controls.minDistance = 0.04; controls.maxDistance = 0.06; insideFov(); }
+  else { camera.near = 0.05; camera.fov = 35; controls.enableZoom = true; controls.enablePan = true; controls.rotateSpeed = 1; controls.minDistance = 0.5; controls.maxDistance = 30; camera.updateProjectionMatrix(); }
+}
+function standAt(x, y, look) {                                   // встать в точку (x, y) на высоте глаз, взгляд — по направлению look или прежнему
+  const eye = P(x, y, EYE); let dir;
+  if (look) dir = P(...look).sub(eye).normalize(); else dir = controls.target.clone().sub(camera.position).setY(0).normalize();
+  camera.position.copy(eye); controls.target.copy(eye).add(dir.multiplyScalar(0.05)); controls.update(); need();
+}
 const vbar = document.getElementById('views'); let curView = null;
 function setView(n) {
+  if (INSIDE[n]) { curView = n; camera.up.set(0, 1, 0); setInside(true); const q = INSIDE[n]; standAt(q.pos[0], q.pos[1], q.look);
+    [...vbar.children].forEach(b => b.setAttribute('aria-pressed', b.textContent === n)); return; }
+  if (inside) setInside(false);
   const v = VIEWS[n]; curView = n;
   camera.up.set(0, 1, 0);
   controls.target.copy(P(...v.tgt)); const off = P(...v.pos).sub(controls.target);
@@ -1425,7 +1444,7 @@ function setView(n) {
   for (const t of v.off || []) { const b = [...tbar.children].find(q => q.textContent === t); if (b && b.getAttribute('aria-pressed') === 'true') b.click(); }
   need();
 }
-Object.keys(VIEWS).forEach(n => { const b = document.createElement('button'); b.className = 'chip'; b.type = 'button'; b.textContent = n; b.onclick = () => setView(n); vbar.appendChild(b); });
+[...Object.keys(VIEWS), ...Object.keys(INSIDE)].forEach(n => { const b = document.createElement('button'); b.className = 'chip'; b.type = 'button'; b.textContent = n; b.onclick = () => setView(n); vbar.appendChild(b); });
 const tbar = document.getElementById('toggles');
 const T = {'Во весь экран': ['full', false], 'Подписи': [[G.ftxt], true], ...(CLIENT ? {} : {'Выноски': ['labs', false], 'Стены': [[G.walls], true]}), 'Стены с/у и коридора': [[G.wsu, G.wkor], true], 'Стена кухни-гостиной': [[G.wkg], true], ...(CLIENT ? {} : {'Перегородка': [[G.pw], true]}), 'Перекрытие': [[G.slab], true], 'Потолок ГКЛ': [[G.gkl], false], 'Пол': [[G.floor], true], ...(CLIENT ? {} : {'Трубы Ø90': [[G.v90], true]}), 'Шкаф стир. машины': [[G.cab], true], 'Двери': [[G.doors], true], 'Кухня': [[G.kit], true], ...(CLIENT ? {} : {'Номера': [null, true]})};
 for (const [n, [g, on]] of Object.entries(T)) {
@@ -1525,12 +1544,19 @@ renderer.domElement.addEventListener('pointerup', e => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
   const r = renderer.domElement.getBoundingClientRect();
   ray.setFromCamera({x: (e.clientX - r.left) / r.width * 2 - 1, y: -(e.clientY - r.top) / r.height * 2 + 1}, camera);
-  const h = ray.intersectObjects(pick, false).filter(q => shown(q.object)); select(h.length ? h[0].object : null);
+  const h = ray.intersectObjects(pick, false).filter(q => shown(q.object));
+  if (inside) {                                                   // тап по полу — перейти туда (в пределах помещения)
+    const o = ray.ray.origin, d = ray.ray.direction, fy = D.FL / 1000;
+    if (d.y < -1e-3) { const t = (fy - o.y) / d.y; const p = o.clone().add(d.clone().multiplyScalar(t));
+      if (!h.length || h[0].distance > t) { const R = D.room, x = p.x * 1000 + CX, y = CY - p.z * 1000;
+        standAt(Math.min(R.x[1] - 250, Math.max(R.x[0] + 250, x)), Math.min(R.y[1] - 250, Math.max(R.y[0] + 250, y))); select(null); return; } }
+  }
+  select(h.length ? h[0].object : null);
 });
 // рендер по требованию
 let dirty = true; const need = () => { dirty = true; };
 controls.addEventListener('change', need);
-function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); need(); }
+function resize() { const w = stage.clientWidth, h = stage.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; if (inside) insideFov(); camera.updateProjectionMatrix(); need(); }
 new ResizeObserver(resize).observe(stage);
 const v3 = new THREE.Vector3();
 function loop() {
